@@ -1,6 +1,9 @@
 import sqlite3
 from pathlib import Path
 from config import DB_PATH
+import streamlit as st
+from supabase import create_client
+import os
 
 def get_connection():
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
@@ -155,7 +158,7 @@ def init_db():
     )""")
     c.execute("""CREATE TABLE IF NOT EXISTS assignments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        course_id INTEGER REFERENCES courses(id),
+        course_id REFERENCES courses(id),
         title TEXT NOT NULL,
         due_date DATE,
         priority TEXT DEFAULT 'medium',
@@ -166,7 +169,7 @@ def init_db():
     )""")
     c.execute("""CREATE TABLE IF NOT EXISTS textbooks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        course_id INTEGER REFERENCES courses(id),
+        course_id REFERENCES courses(id),
         title TEXT NOT NULL,
         filepath TEXT,
         vectorized INTEGER DEFAULT 0,
@@ -338,3 +341,54 @@ def _seed_defaults():
 
     conn.commit()
     conn.close()
+
+# ── CLOUD SAVE STATE SYSTEM ──────────────────────────────────────────────────
+
+def get_supabase_client():
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_KEY"]
+        return create_client(url, key)
+    except Exception:
+        return None
+
+def download_db_from_cloud():
+    """Downloads the jarvis.db file from Supabase storage on session initialization"""
+    supabase = get_supabase_client()
+    if not supabase:
+        return
+
+    try:
+        res = supabase.storage.from_("database-backups").download("jarvis.db")
+        os.makedirs(os.path.dirname(str(DB_PATH)), exist_ok=True)
+        with open(str(DB_PATH), "wb") as f:
+            f.write(res)
+    except Exception as e:
+        print(f"No active cloud save state found. Bootstrapping fresh local copy. ({e})")
+
+def upload_db_to_cloud():
+    """Overwrites or updates the cloud jarvis.db file with current session data"""
+    supabase = get_supabase_client()
+    if not supabase:
+        return
+
+    try:
+        if os.path.exists(str(DB_PATH)):
+            with open(str(DB_PATH), "rb") as f:
+                # Using the storage API bucket file upload with explicit upsert option forced
+                supabase.storage.from_("database-backups").upload(
+                    path="jarvis.db", 
+                    file=f, 
+                    file_options={"cache-control": "3600", "upsert": "true"}
+                )
+    except Exception:
+        try:
+            # Fallback wrapper if the resource already exists and needs an explicit update call
+            with open(str(DB_PATH), "rb") as f:
+                supabase.storage.from_("database-backups").update(
+                    path="jarvis.db", 
+                    file=f, 
+                    file_options={"cache-control": "3600", "upsert": "true"}
+                )
+        except Exception as e:
+            print(f"Cloud state backup sync failed: {e}")

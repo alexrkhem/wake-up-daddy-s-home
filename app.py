@@ -14,10 +14,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-from database import init_db, get_connection
+from database import init_db, get_connection, download_db_from_cloud, upload_db_to_cloud
 from styles import apply_styles, page_header
 from components.jarvis import render_jarvis_sidebar
 import datetime, json
+
+if "db_downloaded" not in st.session_state:
+    download_db_from_cloud()
+    st.session_state.db_downloaded = True
 
 init_db()
 apply_styles()
@@ -203,5 +207,6 @@ font-size:.75rem;background:#23201c;border-radius:3px;margin:.12rem 0">
 </div>""", unsafe_allow_html=True)
 
 conn.close()
+upload_db_to_cloud()
 st.markdown('<div style="height:2rem"></div>', unsafe_allow_html=True)
 st.markdown('<div style="font-size:.6rem;color:#3d3028;text-align:center;letter-spacing:2px">JARVIS PERSONAL OS · INDIE EDITION · {}</div>'.format(today.strftime("%B %Y")), unsafe_allow_html=True)
