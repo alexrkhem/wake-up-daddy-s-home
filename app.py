@@ -19,9 +19,11 @@ from styles import apply_styles, page_header
 from components.jarvis import render_jarvis_sidebar
 import datetime, json
 
-if "db_downloaded" not in st.session_state:
-    download_db_from_cloud()
-    st.session_state.db_downloaded = True
+# TEMPORARY FORCE RESTORE
+st.session_state.clear()
+download_db_from_cloud()
+st.session_state.db_downloaded = True
+
 
 init_db()
 apply_styles()
