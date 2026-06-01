@@ -367,7 +367,7 @@ def download_db_from_cloud():
         print(f"No existing cloud database found. Creating fresh copy. ({e})")
 
 def upload_db_to_cloud():
-    """Uploads or overwrites your local SQLite file in Supabase storage"""
+    """Uploads your local SQLite file to Supabase storage to save state"""
     supabase = get_supabase_client()
     if not supabase:
         return
@@ -375,7 +375,6 @@ def upload_db_to_cloud():
     try:
         if os.path.exists(str(DB_PATH)):
             with open(str(DB_PATH), "rb") as f:
-                # Attempt an initial upload
                 supabase.storage.from_("database-backups").upload(
                     path="jarvis.db", 
                     file=f, 
@@ -383,12 +382,11 @@ def upload_db_to_cloud():
                 )
     except Exception:
         try:
-            # Fallback to an update call if the file already exists and upsert fails
             with open(str(DB_PATH), "rb") as f:
                 supabase.storage.from_("database-backups").update(
                     path="jarvis.db", 
                     file=f, 
                     file_options={"cache-control": "3600", "upsert": "true"}
                 )
-        except Exception as e:
-            print(f"Cloud backup fallback failed: {e}")
+        except Exception:
+            pass

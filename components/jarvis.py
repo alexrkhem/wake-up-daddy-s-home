@@ -29,6 +29,19 @@ def render_jarvis_sidebar(rag_context: str = ""):
             _nav_links()
             return
 
+        # Safe dynamic import check for groq package
+        try:
+            import groq
+            from groq import Groq
+            groq_available = True
+        except ImportError:
+            groq_available = False
+
+        if not groq_available:
+            st.error("Groq library deployment is pending. Re-check requirements.txt or reboot Streamlit console.")
+            _nav_links()
+            return
+
         if "jarvis_msgs" not in st.session_state:
             st.session_state.jarvis_msgs = []
 
@@ -46,15 +59,12 @@ padding:.45rem .7rem;margin:.3rem 0;border-radius:0 3px 3px 0;font-size:.77rem">
             st.session_state.jarvis_msgs.append({"role": "user", "content": prompt})
             with st.spinner("thinking…"):
                 try:
-                    from groq import Groq
                     client = Groq(api_key=groq_key)
                     sys_p  = SYSTEM_PROMPT + (f"\n\nTextbook context:\n{rag_context}" if rag_context else "")
                     
-                    # Map 'assistant' role to comply with standard OpenAI/Groq structures
                     msgs   = [{"role": m["role"], "content": m["content"]}
                               for m in st.session_state.jarvis_msgs[-10:]]
                     
-                    # Request completion using Meta's fast and highly capable Llama 3 model
                     resp = client.chat.completions.create(
                         model="llama3-8b-8192",
                         messages=[{"role": "system", "content": sys_p}] + msgs,
@@ -67,7 +77,7 @@ padding:.45rem .7rem;margin:.3rem 0;border-radius:0 3px 3px 0;font-size:.77rem">
                     })
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Jarvis: {e}")
+                    st.error(f"Jarvis Run Error: {e}")
 
         c1, c2 = st.columns(2)
         with c1:
