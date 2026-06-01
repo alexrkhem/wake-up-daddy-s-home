@@ -2,7 +2,6 @@ import streamlit as st
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from config import ANTHROPIC_API_KEY
 
 SYSTEM_PROMPT = """You are Jarvis — a calm, sharp, direct AI assistant embedded in a personal dashboard.
 Your user tracks: todos, sleep, fitness (weightlifting, steps, height training), nutrition (Cronometer CSV),
@@ -22,8 +21,11 @@ def render_jarvis_sidebar(rag_context: str = ""):
   <div style="height:1px;background:linear-gradient(to right,transparent,#c4a882,transparent);margin:.7rem 0"></div>
 </div>""", unsafe_allow_html=True)
 
-        if not ANTHROPIC_API_KEY:
-            st.warning("Set ANTHROPIC_API_KEY in .env to activate Jarvis.")
+        # Pull the Groq API key securely from your Streamlit cloud secrets
+        groq_key = st.secrets.get("GROQ_API_KEY", None)
+
+        if not groq_key:
+            st.warning("Set GROQ_API_KEY in Streamlit Secrets to activate Jarvis.")
             _nav_links()
             return
 
@@ -44,15 +46,25 @@ padding:.45rem .7rem;margin:.3rem 0;border-radius:0 3px 3px 0;font-size:.77rem">
             st.session_state.jarvis_msgs.append({"role": "user", "content": prompt})
             with st.spinner("thinking…"):
                 try:
-                    import anthropic as _ant
-                    client = _ant.Anthropic(api_key=ANTHROPIC_API_KEY)
+                    from groq import Groq
+                    client = Groq(api_key=groq_key)
                     sys_p  = SYSTEM_PROMPT + (f"\n\nTextbook context:\n{rag_context}" if rag_context else "")
+                    
+                    # Map 'assistant' role to comply with standard OpenAI/Groq structures
                     msgs   = [{"role": m["role"], "content": m["content"]}
                               for m in st.session_state.jarvis_msgs[-10:]]
-                    resp   = client.messages.create(model="claude-sonnet-4-20250514",
-                                                    max_tokens=900, system=sys_p, messages=msgs)
-                    st.session_state.jarvis_msgs.append({"role": "assistant",
-                                                         "content": resp.content[0].text})
+                    
+                    # Request completion using Meta's fast and highly capable Llama 3 model
+                    resp = client.chat.completions.create(
+                        model="llama3-8b-8192",
+                        messages=[{"role": "system", "content": sys_p}] + msgs,
+                        max_tokens=900
+                    )
+                    
+                    st.session_state.jarvis_msgs.append({
+                        "role": "assistant",
+                        "content": resp.choices[0].message.content
+                    })
                     st.rerun()
                 except Exception as e:
                     st.error(f"Jarvis: {e}")
