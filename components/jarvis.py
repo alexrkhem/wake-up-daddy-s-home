@@ -1,6 +1,5 @@
 import streamlit as st
 import sys
-import subprocess
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -47,17 +46,11 @@ padding:.45rem .7rem;margin:.3rem 0;border-radius:0 3px 3px 0;font-size:.77rem">
             st.session_state.jarvis_msgs.append({"role": "user", "content": prompt})
             with st.spinner("thinking…"):
                 try:
-                    # Force a check and background installation of groq if Streamlit skipped requirements.txt
-                    try:
-                        from groq import Groq
-                    except ImportError:
-                        subprocess.check_call([sys.executable, "-m", "pip", "install", "groq"])
-                        from groq import Groq
-
+                    from groq import Groq
                     client = Groq(api_key=groq_key)
                     sys_p  = SYSTEM_PROMPT + (f"\n\nTextbook context:\n{rag_context}" if rag_context else "")
                     
-                    # Map 'assistant' role to comply with standard structures
+                    # Map 'assistant' role to comply with standard OpenAI/Groq structures
                     msgs   = [{"role": m["role"], "content": m["content"]}
                               for m in st.session_state.jarvis_msgs[-10:]]
                     
