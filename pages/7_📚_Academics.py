@@ -174,7 +174,6 @@ with tab_assign:
             if st.button("🗑", key=f"adel_{aid}", use_container_width=True):
                 run_q("DELETE FROM assignments WHERE id=?", (aid,)); st.rerun()
 
-# ══════════════════════ AI TUTOR (RAG) ══════════════════════════════════════
 # ── RAG TUTOR INTERFACE ──────────────────────────────────────────
     st.markdown("### 🤖 Jarvis AI Textbook Tutor")
     
@@ -186,7 +185,7 @@ with tab_assign:
         from groq import Groq
         ai_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-        q_col1, q_col2 = st.columns([3, 1])
+        q_col1, q_col2 = st.columns([2.5, 1.2])
         with q_col1:
             user_q = st.text_input("Ask Jarvis anything about your course textbooks / material:", key="rag_q")
         with q_col2:
@@ -219,7 +218,6 @@ with tab_assign:
         if st.button("✨ Generate Concept Practice Problems"):
             with st.spinner("Formulating engineering curriculum problems..."):
                 try:
-                    # Leverage Groq to generate your step-by-step problems
                     prob_res = ai_client.chat.completions.create(
                         model="llama-3.1-8b-instant",
                         messages=[{"role": "user", "content": f"Generate 3 highly specific engineering practice exam questions (with detailed analytical step-by-step solutions) for these active courses: {[c[1] for c in active_courses]}. Focus heavily on core formulas and structural concepts."}],
