@@ -6,7 +6,8 @@ from database import init_db, get_connection
 from styles import apply_styles, page_header
 from components.jarvis import render_jarvis_sidebar
 from components.rag_engine import load_and_index_pdf, query_textbooks, list_collections, generate_practice_problems
-from config import UPLOADS_DIR, ANTHROPIC_API_KEY
+from config import UPLOADS_DIR
+import groq # Import the groq library here
 import plotly.graph_objects as go
 import tempfile, os
 init_db(); apply_styles(); render_jarvis_sidebar()
@@ -174,89 +175,60 @@ with tab_assign:
                 run_q("DELETE FROM assignments WHERE id=?", (aid,)); st.rerun()
 
 # ══════════════════════ AI TUTOR (RAG) ══════════════════════════════════════
-with tab_tutor:
-    st.markdown("### 🧠 Jarvis AI Tutor")
-
-    if not ANTHROPIC_API_KEY:
-        st.warning("Set ANTHROPIC_API_KEY in .env to use the AI tutor.")
+# ── RAG TUTOR INTERFACE ──────────────────────────────────────────
+    st.markdown("### 🤖 Jarvis AI Textbook Tutor")
+    
+    # Check for your free Groq Key instead of Anthropic
+    if "GROQ_API_KEY" not in st.secrets:
+        st.warning("🔗 Free Groq API Key missing. Please add GROQ_API_KEY to your Streamlit Secrets.")
     else:
-        col_upload, col_query = st.columns([1, 1.5])
+        # Initialize the free Groq client
+        from groq import Groq
+        ai_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-        with col_upload:
-            st.markdown("#### 📖 Upload Textbooks")
-            st.markdown('<div style="font-size:.78rem;color:#9a8878;margin-bottom:.5rem">Upload PDF textbooks. Jarvis will index them and use them to answer your questions and generate practice problems.</div>', unsafe_allow_html=True)
-            pdf_file = st.file_uploader("Upload PDF Textbook", type=["pdf"])
-            tb_course = st.selectbox("Link to Course", ["None"] + [c[1] for c in courses])
-            tb_title  = st.text_input("Textbook Title (e.g. 'Stewart Calculus 8e')")
+        q_col1, q_col2 = st.columns([3, 1])
+        with q_col1:
+            user_q = st.text_input("Ask Jarvis anything about your course textbooks / material:", key="rag_q")
+        with q_col2:
+            target_course = st.selectbox("Context Course", ["All"] + [c[1] for c in active_courses])
 
-            if st.button("📥 Index Textbook") and pdf_file and tb_title.strip():
-                with st.spinner("Indexing textbook… this may take a minute for large PDFs"):
-                    fpath = UPLOADS_DIR / f"tb_{pdf_file.name}"
-                    with open(str(fpath), "wb") as f:
-                        f.write(pdf_file.getvalue())
-                    coll_name = tb_title.strip().lower().replace(" ", "_")[:30]
-                    success = load_and_index_pdf(str(fpath), coll_name)
-                    if success:
-                        cid = None
-                        for c in courses:
-                            if c[1] == tb_course: cid = c[0]; break
-                        run_q("INSERT INTO textbooks (course_id,title,filepath,vectorized) VALUES (?,?,?,1)",
-                              (cid, tb_title.strip(), str(fpath)))
-                        st.success(f"'{tb_title}' indexed! Jarvis can now query it.")
-                    else:
-                        st.error("Indexing failed. Check requirements (pypdf, chromadb, langchain-community).")
+        if user_q.strip():
+            with st.spinner("Jarvis is scanning textbook vectors..."):
+                # Query your processed textbook vectors
+                context_str = query_textbooks(user_q, filter_course=None if target_course=="All" else target_course)
+                
+                # Construct the prompt for Groq
+                messages = [
+                    {"role": "system", "content": f"You are Jarvis, an elite engineering tutor. Answer the user's question accurately using this textbook context:\n\n{context_str}\n\nProvide deep architectural and clear mathematical breakdowns."},
+                    {"role": "user", "content": user_q}
+                ]
+                
+                try:
+                    res = ai_client.chat.completions.create(
+                        model="llama-3.1-8b-instant",
+                        messages=messages,
+                        max_tokens=2048
+                    )
+                    st.markdown(f"""<div style="background:#23201c;border-left:3px solid #c4a882;padding:1rem;border-radius:4px;margin-top:1rem">
+                    <span style="color:#f0e6d3;font-size:.9rem">{res.choices[0].message.content}</span></div>""", unsafe_allow_html=True)
+                except Exception as e:
+                    st.error(f"Tutor Run Error: {e}")
 
-            st.markdown("**Indexed Textbooks:**")
-            indexed = get_q("SELECT t.title,c.name FROM textbooks t LEFT JOIN courses c ON t.course_id=c.id WHERE t.vectorized=1")
-            if indexed:
-                for tb in indexed:
-                    st.markdown(f'<div style="font-size:.78rem;color:#7a8c6e">✓ {tb[0]} ({tb[1] or "no course"})</div>', unsafe_allow_html=True)
-            else:
-                st.markdown('<span style="font-size:.75rem;color:#9a8878">No textbooks indexed yet.</span>', unsafe_allow_html=True)
-
-        with col_query:
-            st.markdown("#### 💬 Ask Jarvis / Generate Problems")
-            collections = list_collections()
-            sel_coll = st.selectbox("Textbook to query (optional)", ["None — general knowledge"] + collections)
-            query_type = st.radio("Mode", ["Ask a question","Generate practice problems"], horizontal=True)
-            question = st.text_area("Question / Topic", height=90,
-                                    placeholder="e.g. 'Explain Gaussian elimination' or 'Statics equilibrium — 3D forces'")
-            course_context = st.selectbox("Course context", ["General"] + [c[1] for c in courses])
-
-            if st.button("🎓 Ask Jarvis", type="primary"):
-                if question.strip():
-                    with st.spinner("Jarvis is thinking…"):
-                        context = ""
-                        if sel_coll and sel_coll != "None — general knowledge":
-                            context = query_textbooks(question, sel_coll)
-
-                        if query_type == "Generate practice problems":
-                            result = generate_practice_problems(question.strip(), course_context, context)
-                        else:
-                            if not ANTHROPIC_API_KEY:
-                                result = "Set ANTHROPIC_API_KEY to use tutor."
-                            else:
-                                import anthropic
-                                client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-                                sys_prompt = f"""You are a brilliant STEM tutor specializing in {course_context}.
-Answer the student's question clearly and thoroughly.
-Use step-by-step explanations. Use LaTeX notation ($...$) for math.
-If textbook context is provided, reference it and cite page numbers where relevant."""
-                                if context:
-                                    sys_prompt += f"\n\nTextbook context:\n{context[:3000]}"
-                                resp = client.messages.create(
-                                    model="claude-sonnet-4-20250514", max_tokens=1500,
-                                    messages=[{"role":"user","content":question.strip()}],
-                                    system=sys_prompt)
-                                result = resp.content[0].text
-
-                        st.session_state["tutor_result"] = result
-                else:
-                    st.error("Enter a question or topic.")
-
-            if "tutor_result" in st.session_state:
-                st.markdown('<div class="vinyl-divider"></div>', unsafe_allow_html=True)
-                st.markdown(st.session_state["tutor_result"])
+        # ── PRACTICE PROBLEMS GENERATOR ──────────────────────────────────────
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("✨ Generate Concept Practice Problems"):
+            with st.spinner("Formulating engineering curriculum problems..."):
+                try:
+                    # Leverage Groq to generate your step-by-step problems
+                    prob_res = ai_client.chat.completions.create(
+                        model="llama-3.1-8b-instant",
+                        messages=[{"role": "user", "content": f"Generate 3 highly specific engineering practice exam questions (with detailed analytical step-by-step solutions) for these active courses: {[c[1] for c in active_courses]}. Focus heavily on core formulas and structural concepts."}],
+                        max_tokens=2048
+                    )
+                    st.markdown(f"""<div style="background:#1d1b18;border:1px dashed #3d3028;padding:1rem;border-radius:4px">
+                    <span style="color:#f0e6d3;font-size:.88rem;white-space:pre-wrap">{prob_res.choices[0].message.content}</span></div>""", unsafe_allow_html=True)
+                except Exception as e:
+                    st.error(f"Problem Generator Error: {e}")
 
 # ══════════════════════ COURSES ═════════════════════════════════════════════
 with tab_courses:
