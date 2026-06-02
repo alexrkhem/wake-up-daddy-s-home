@@ -7,7 +7,6 @@ from styles import apply_styles, page_header
 from components.jarvis import render_jarvis_sidebar
 from components.rag_engine import load_and_index_pdf, query_textbooks, list_collections, generate_practice_problems
 from config import UPLOADS_DIR
-import groq # Import the groq library here
 import plotly.graph_objects as go
 import tempfile, os
 init_db(); apply_styles(); render_jarvis_sidebar()
@@ -25,165 +24,127 @@ STEM_COLORS = {"Linear Algebra":"#d4681e","Statics":"#c4a882","Chemistry":"#7a8c
 
 courses = get_q("SELECT id,name,code,color FROM courses WHERE active=1 ORDER BY name")
 
-tab_overview, tab_study, tab_assign, tab_tutor, tab_courses = st.tabs([
-    "📊 Overview", "⏱ Study Log", "📝 Assignments", "🧠 AI Tutor", "🎓 Courses"])
+# ── TOP KPI ROW ─────────────────────────────────────────────────────────────
+kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+with kpi1:
+    t_min = get1("SELECT COALESCE(SUM(duration_mins),0) FROM study_sessions")[0]
+    st.metric("Total Focus Time", f"{t_min//60}h {t_min%60}m")
+with kpi2:
+    w_min = get1("SELECT COALESCE(SUM(duration_mins),0) FROM study_sessions WHERE date>=?", (str(today - datetime.timedelta(days=7)),))[0]
+    st.metric("Weekly Velocity", f"{w_min//60}h {w_min%60}m")
+with kpi3:
+    pending = get1("SELECT COUNT(*) FROM assignments WHERE status!='done'")[0]
+    st.metric("Pending Assignments", pending)
+with kpi4:
+    overdue = get1("SELECT COUNT(*) FROM assignments WHERE status!='done' AND due_date<?", (str(today),))[0]
+    st.metric("Overdue Tasks", overdue, delta=-overdue if overdue > 0 else 0, delta_color="inverse")
 
-# ══════════════════════ OVERVIEW ════════════════════════════════════════════
-with tab_overview:
-    wk_ago = str(today - datetime.timedelta(days=7))
-    mo_ago = str(today - datetime.timedelta(days=30))
-    total_wk  = get1("SELECT COALESCE(SUM(duration_mins),0) FROM study_sessions WHERE date>=?",(wk_ago,))[0]
-    total_mo  = get1("SELECT COALESCE(SUM(duration_mins),0) FROM study_sessions WHERE date>=?",(mo_ago,))[0]
-    open_ass  = get1("SELECT COUNT(*) FROM assignments WHERE status!='done'"                          )[0]
-    due_soon  = get1("SELECT COUNT(*) FROM assignments WHERE status!='done' AND due_date<=?",
-                     (str(today + datetime.timedelta(days=7)),))[0]
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Study Time (7d)",  f"{total_wk//60}h {total_wk%60}m")
-    c2.metric("Study Time (30d)", f"{total_mo//60}h {total_mo%60}m")
-    c3.metric("Open Assignments", open_ass)
-    c4.metric("Due This Week",    due_soon)
+# ── MAIN TABS ───────────────────────────────────────────────────────────────
+tab_log, tab_assign, tab_tutor, tab_courses = st.tabs(["⏱ Study Logger", "📝 Assignments", "🧠 AI Tutor", "🗂 Courses"])
 
-    # Time by course
-    course_time = get_q("""SELECT c.name, COALESCE(SUM(s.duration_mins),0)
-                           FROM courses c LEFT JOIN study_sessions s
-                             ON c.id=s.course_id AND s.date>=?
-                           WHERE c.active=1 GROUP BY c.id ORDER BY 2 DESC""", (mo_ago,))
-    if course_time:
-        fig = go.Figure(go.Bar(
-            x=[r[0] for r in course_time], y=[r[1] for r in course_time],
-            marker_color=[STEM_COLORS.get(r[0],"#d4681e") for r in course_time],
-            marker_line_width=0))
-        fig.update_layout(paper_bgcolor="#1a1814", plot_bgcolor="#1a1814",
-                          font=dict(color="#f0e6d3", family="Space Mono"),
-                          yaxis=dict(title="Minutes", gridcolor="#2d2520"),
-                          xaxis=dict(color="#9a8878"),
-                          margin=dict(l=10,r=10,t=10,b=10), height=240,
-                          title=dict(text="Study Time by Course (30d)", font=dict(color="#c4a882")))
-        st.plotly_chart(fig, use_container_width=True)
-
-    # Upcoming due dates
-    upcoming = get_q("""SELECT a.title, c.name, a.due_date, a.priority, a.status
-                        FROM assignments a JOIN courses c ON a.course_id=c.id
-                        WHERE a.status!='done' ORDER BY a.due_date NULLS LAST LIMIT 10""")
-    if upcoming:
-        st.markdown("### 📅 Upcoming Assignments")
-        for a in upcoming:
-            days_left = ""
-            urgent_color = "#f0e6d3"
-            if a[2]:
-                d = (datetime.date.fromisoformat(a[2]) - today).days
-                urgent_color = "#8b4049" if d <= 2 else "#d4681e" if d <= 7 else "#9a8878"
-                days_left = f" · {d}d left" if d >= 0 else " · OVERDUE"
-            p_color = {"high":"#e08090","medium":"#d4681e","low":"#7a8c6e"}.get(a[3],"#9a8878")
-            course_color = STEM_COLORS.get(a[1], "#9a8878")
-            st.markdown(f"""
-<div class="vinyl-card" style="border-left-color:{course_color};padding:.4rem 1rem;margin:.2rem 0">
-  <div style="display:flex;justify-content:space-between">
-    <span style="font-size:.85rem">{a[0]}</span>
-    <span style="color:{urgent_color};font-size:.75rem;font-family:'Space Mono',monospace">{a[2] or '—'}{days_left}</span>
-  </div>
-  <div style="font-size:.65rem;color:#9a8878">{a[1]} · <span style="color:{p_color}">{a[3]}</span></div>
-</div>""", unsafe_allow_html=True)
-
-# ══════════════════════ STUDY LOG ═══════════════════════════════════════════
-with tab_study:
-    with st.form("log_study"):
-        sc1,sc2,sc3 = st.columns(3)
-        with sc1:
-            ss_date   = st.date_input("Date", value=today)
-            ss_course = st.selectbox("Course", [""] + [f"{c[1]} ({c[2]})" for c in courses])
-        with sc2:
-            ss_dur    = st.number_input("Duration (min)", 5, 600, 60, 5)
-            ss_prod   = st.slider("Productivity", 1, 5, 3)
-        with sc3:
-            ss_topic  = st.text_input("Topic / Chapter")
-            ss_notes  = st.text_area("Notes", height=68)
-        if st.form_submit_button("Log Session"):
-            cid = None
-            if ss_course:
-                for c in courses:
-                    if f"{c[1]} ({c[2]})" == ss_course:
-                        cid = c[0]; break
-            run_q("INSERT INTO study_sessions (date,course_id,duration_mins,topic,notes,productivity) VALUES (?,?,?,?,?,?)",
-                  (str(ss_date), cid, ss_dur, ss_topic.strip(), ss_notes.strip(), ss_prod))
-            st.success(f"Logged {ss_dur}min!"); st.rerun()
-
-    recent_sessions = get_q("""SELECT s.date,c.name,s.duration_mins,s.topic,s.productivity
-                               FROM study_sessions s LEFT JOIN courses c ON s.course_id=c.id
-                               ORDER BY s.date DESC, s.id DESC LIMIT 20""")
-    prod_colors = {1:"#8b4049",2:"#d4681e",3:"#c4a882",4:"#7a8c6e",5:"#f0e6d3"}
-    for s in recent_sessions:
-        sdate,cname,sdur,stopic,sprod = s
-        cc = STEM_COLORS.get(cname or "", "#9a8878")
-        pc = prod_colors.get(sprod, "#9a8878")
-        st.markdown(f"""
-<div class="vinyl-card" style="border-left-color:{cc};padding:.4rem 1rem;margin:.15rem 0">
-  <div style="display:flex;justify-content:space-between">
-    <span style="font-size:.82rem">{cname or 'No course'} — {stopic or '—'}</span>
-    <span style="font-family:'Space Mono',monospace;font-size:.8rem;color:#d4681e">{sdur}min</span>
-  </div>
-  <div style="font-size:.65rem;color:#9a8878">{sdate} · Productivity: <span style="color:{pc}">{'■'*(sprod or 1)}{'□'*(5-(sprod or 1))}</span></div>
-</div>""", unsafe_allow_html=True)
-
-# ══════════════════════ ASSIGNMENTS ═════════════════════════════════════════
-with tab_assign:
-    with st.form("add_assignment"):
-        ac1,ac2,ac3 = st.columns(3)
-        with ac1:
-            a_title  = st.text_input("Assignment Title *")
-            a_course = st.selectbox("Course", [""] + [f"{c[1]} ({c[2]})" for c in courses])
-        with ac2:
-            a_due    = st.date_input("Due Date", value=None)
-            a_pri    = st.selectbox("Priority", ["high","medium","low"], index=1)
-        with ac3:
-            a_notes  = st.text_area("Notes", height=68)
-        if st.form_submit_button("Add Assignment"):
-            if a_title.strip():
-                cid = None
-                for c in courses:
-                    if f"{c[1]} ({c[2]})" == a_course: cid = c[0]; break
-                run_q("INSERT INTO assignments (course_id,title,due_date,priority,notes) VALUES (?,?,?,?,?)",
-                      (cid, a_title.strip(), str(a_due) if a_due else None, a_pri, a_notes.strip()))
+# ══════════════════════ STUDY LOGGER ════════════════════════════════════════
+with tab_log:
+    col_f, col_v = st.columns([1, 1.3])
+    with col_f:
+        st.markdown("### Log Study Session")
+        with st.form("study_form", clear_on_submit=True):
+            if not courses:
+                st.warning("Add a course in the 'Courses' tab first.")
+                s_course = None
+            else:
+                s_course = st.selectbox("Course", [c[1] for c in courses])
+            s_min   = st.number_input("Duration (minutes)", min_value=1, max_value=480, value=60, step=15)
+            s_topic = st.text_input("Topic Worked On")
+            s_prod  = st.slider("Productivity Rating", 1, 5, 4)
+            s_notes = st.text_area("Session Notes / Breakthroughs", height=70)
+            if st.form_submit_button("Log Session") and s_course:
+                c_id = next(c[0] for c in courses if c[1] == s_course)
+                run_q("INSERT INTO study_sessions (date,course_id,duration_mins,topic,notes,productivity) VALUES (?,?,?,?,?,?)",
+                      (str(today), c_id, s_min, s_topic.strip(), s_notes.strip(), s_prod))
+                st.success("Session logged.")
                 st.rerun()
 
-    status_filter = st.selectbox("Filter", ["all","todo","in_progress","done"], key="af")
-    where = "" if status_filter=="all" else f"WHERE a.status='{status_filter}'"
-    assignments = get_q(f"""SELECT a.id,a.title,c.name,a.due_date,a.priority,a.status,a.grade
-                            FROM assignments a LEFT JOIN courses c ON a.course_id=c.id
-                            {where} ORDER BY a.due_date NULLS LAST""")
-    for a in assignments:
-        aid,atitle,cname,adue,apri,astatus,agrade = a
-        overdue = adue and adue < str(today) and astatus != "done"
-        cc  = STEM_COLORS.get(cname or "","#9a8878")
-        pc  = {"high":"#e08090","medium":"#d4681e","low":"#7a8c6e"}.get(apri,"#9a8878")
-        col_a, col_b, col_c = st.columns([4,1,1])
-        with col_a:
-            over_tag = ' <span style="font-size:.65rem;color:#8b4049">OVERDUE</span>' if overdue else ""
-            done_style = "text-decoration:line-through;opacity:.5;" if astatus=="done" else ""
-            grade_html = f' <span style="color:#c4a882">Grade: {agrade}</span>' if agrade else ""
-            st.markdown(f"""
-<div class="vinyl-card" style="border-left-color:{cc};padding:.4rem 1rem;margin:.15rem 0">
-  <span style="font-size:.85rem;{done_style}">{atitle}</span>{over_tag}{grade_html}
-  <br><span style="font-size:.65rem;color:#9a8878">{cname or '—'} · <span style="color:{pc}">{apri}</span> · {adue or 'no date'}</span>
+    with col_v:
+        st.markdown("### Focus Allocation")
+        alloc = get_q("""SELECT c.name, SUM(s.duration_mins) 
+                         FROM study_sessions s JOIN courses c ON s.course_id=c.id 
+                         GROUP BY c.name""")
+        if alloc:
+            labels = [a[0] for a in alloc]
+            values = [a[1] for a in alloc]
+            colors = [STEM_COLORS.get(l, "#9a8878") for l in labels]
+            fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.6,
+                                         marker=dict(colors=colors),
+                                         textinfo='label+percent',
+                                         hoverinfo='value',
+                                         textfont=dict(color="#f0e6d3", size=10))])
+            fig.update_layout(margin=dict(t=10,b=10,l=10,r=10), height=230,
+                              showlegend=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.markdown('<div style="color:#9a8878;padding:2rem 0;text-align:center;font-size:.8rem">No tracking data gathered yet.</div>', unsafe_allow_html=True)
+
+    st.markdown("### Recent Deep Work Log")
+    recent_s = get_q("""SELECT s.date, c.name, s.duration_mins, s.topic, s.productivity, c.color 
+                        FROM study_sessions s JOIN courses c ON s.course_id=c.id 
+                        ORDER BY s.date DESC, s.id DESC LIMIT 5""")
+    for rs in recent_s:
+        st.markdown(f"""
+<div class="vinyl-card" style="border-left-color:{rs[5] or '#d4681e'};padding:.45rem .8rem;margin:.15rem 0">
+  <span style="font-size:.8rem;color:#f0e6d3;font-weight:bold">{rs[1]}</span>
+  <span style="font-size:.7rem;color:#9a8878;margin-left:.5rem">{rs[0]} · {rs[2]} mins · Prod: {rs[4]}/5</span>
+  <br><span style="font-size:.72rem;color:#c4a882">{rs[3] or 'General Review'}</span>
 </div>""", unsafe_allow_html=True)
-        with col_b:
-            if astatus != "done":
-                if st.button("✓ Done", key=f"adone_{aid}", use_container_width=True):
-                    run_q("UPDATE assignments SET status='done' WHERE id=?", (aid,)); st.rerun()
-        with col_c:
-            if st.button("🗑", key=f"adel_{aid}", use_container_width=True):
-                run_q("DELETE FROM assignments WHERE id=?", (aid,)); st.rerun()
+
+# ══════════════════════ ASSIGNMENTS ════════════════════════════════════════
+with tab_assign:
+    col_as1, col_as2 = st.columns([1, 1.2])
+    with col_as1:
+        st.markdown("### New Deliverable")
+        with st.form("assign_form", clear_on_submit=True):
+            if not courses: st.warning("Add a course first."); a_course = None
+            else: a_course = st.selectbox("Course Context", [c[1] for c in courses])
+            a_title = st.text_input("Assignment Title *")
+            a_due   = st.date_input("Due Date", today + datetime.timedelta(days=2))
+            a_prio  = st.select_slider("Priority Allocation", ["low", "medium", "high"], value="medium")
+            a_notes = st.text_area("Requirements / References", height=60)
+            if st.form_submit_button("Queue Assignment") and a_title.strip() and a_course:
+                c_id = next(c[0] for c in courses if c[1] == a_course)
+                run_q("INSERT INTO assignments (course_id,title,due_date,priority,status,notes) VALUES (?,?,?,?,'todo',?)",
+                      (c_id, a_title.strip(), str(a_due), a_prio, a_notes.strip()))
+                st.success("Task queued.")
+                st.rerun()
+
+    with col_as2:
+        st.markdown("### Pipeline Matrix")
+        tasks = get_q("""SELECT a.id, a.title, a.due_date, a.priority, a.status, c.name, c.color 
+                         FROM assignments a JOIN courses c ON a.course_id=c.id 
+                         WHERE a.status!='done' ORDER BY a.due_date ASC""")
+        if tasks:
+            for t in tasks:
+                tid, ttitle, tdue, tprio, tstat, tcname, tccol = t
+                p_color = {"high":"#d4681e","medium":"#c4a882","low":"#7a8c6e"}.get(tprio, "#9a8878")
+                st.markdown(f"""
+<div class="vinyl-card" style="border-left-color:{tccol or '#d4681e'};padding:.5rem .8rem;margin:.25rem 0">
+  <div style="display:flex;justify-content:between;align-items:center">
+    <span style="font-size:.82rem;font-weight:bold;color:#f0e6d3">{ttitle}</span>
+    <span style="font-size:.62rem;text-transform:uppercase;color:{p_color};border:1px solid {p_color};padding:1px 4px;border-radius:2px;margin-left:auto">{tprio}</span>
+  </div>
+  <span style="font-size:.68rem;color:#9a8878">{tcname} · Due: {tdue}</span>
+</div>""", unsafe_allow_html=True)
+                if st.button("Mark Complete", key=f"tcomp_{tid}"):
+                    run_q("UPDATE assignments SET status='done' WHERE id=?", (tid,))
+                    st.rerun()
+        else:
+            st.markdown('<div style="color:#9a8878;padding:2rem 0;text-align:center;font-size:.8rem">Clear horizon. All items completed.</div>', unsafe_allow_html=True)
 
 # ══════════════════════ AI TUTOR ════════════════════════════════════════════
 with tab_tutor:
-    # ── RAG TUTOR INTERFACE ──────────────────────────────────────────
     st.markdown("### 🤖 Jarvis AI Textbook Tutor")
     
-    # Check for your free Groq Key instead of Anthropic
     if "GROQ_API_KEY" not in st.secrets:
         st.warning("🔗 Free Groq API Key missing. Please add GROQ_API_KEY to your Streamlit Secrets.")
     else:
-        # Initialize the free Groq client
         from groq import Groq
         ai_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
@@ -191,15 +152,12 @@ with tab_tutor:
         with q_col1:
             user_q = st.text_input("Ask Jarvis anything about your course textbooks / material:", key="rag_q")
         with q_col2:
-            # FIXED: Changed active_courses to courses to match your database variable
             target_course = st.selectbox("Context Course", ["All"] + [c[1] for c in courses])
 
         if user_q.strip():
             with st.spinner("Jarvis is scanning textbook vectors..."):
-                # Query your processed textbook vectors
                 context_str = query_textbooks(user_q, filter_course=None if target_course=="All" else target_course)
                 
-                # Construct the prompt for Groq
                 messages = [
                     {"role": "system", "content": f"You are Jarvis, an elite engineering tutor. Answer the user's question accurately using this textbook context:\n\n{context_str}\n\nProvide deep architectural and clear mathematical breakdowns."},
                     {"role": "user", "content": user_q}
@@ -216,12 +174,10 @@ with tab_tutor:
                 except Exception as e:
                     st.error(f"Tutor Run Error: {e}")
 
-        # ── PRACTICE PROBLEMS GENERATOR ──────────────────────────────────────
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("✨ Generate Concept Practice Problems"):
             with st.spinner("Formulating engineering curriculum problems..."):
                 try:
-                    # FIXED: Changed active_courses to courses to match your database variable
                     prob_res = ai_client.chat.completions.create(
                         model="llama-3.1-8b-instant",
                         messages=[{"role": "user", "content": f"Generate 3 highly specific engineering practice exam questions (with detailed analytical step-by-step solutions) for these active courses: {[c[1] for c in courses]}. Focus heavily on core formulas and structural concepts."}],
