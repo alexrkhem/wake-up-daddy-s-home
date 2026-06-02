@@ -48,10 +48,11 @@ def render_jarvis_sidebar(rag_context: str = ""):
         for msg in st.session_state.jarvis_msgs[-4:]:
             color = "#c4a882" if msg["role"] == "assistant" else "#d4681e"
             ico   = "◈" if msg["role"] == "assistant" else "◉"
-            text  = msg['content'][:220] + ("…" if len(msg['content']) > 220 else "")
+            text  = msg['content'] # Use full message text here
             st.markdown(f"""<div style="background:#23201c;border-left:2px solid {color};
-padding:.45rem .7rem;margin:.3rem 0;border-radius:0 3px 3px 0;font-size:.77rem">
-<span style="color:{color}">{ico} </span><span style="color:#f0e6d3">{text}</span></div>""",
+padding:.45rem .7rem;margin:.3rem 0;border-radius:0 3px 3px 0;font-size:.77rem;
+max-height:200px;overflow-y:auto"> <!-- Added vertical scrolling if it gets too long -->
+<span style="color:{color}">{ico} </span><span style="color:#f0e6d3;white-space:pre-wrap">{text}</span></div>""",
                         unsafe_allow_html=True)
 
         prompt = st.chat_input("Ask Jarvis…", key="jarvis_input")
