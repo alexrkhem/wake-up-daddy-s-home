@@ -66,7 +66,7 @@ padding:.45rem .7rem;margin:.3rem 0;border-radius:0 3px 3px 0;font-size:.77rem">
                               for m in st.session_state.jarvis_msgs[-10:]]
                     
                     resp = client.chat.completions.create(
-                        model="llama3-8b-8192",
+                        model="llama-3.1-8b-instant",
                         messages=[{"role": "system", "content": sys_p}] + msgs,
                         max_tokens=900
                     )
