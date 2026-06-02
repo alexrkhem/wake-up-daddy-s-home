@@ -156,7 +156,9 @@ with tab_tutor:
 
         if user_q.strip():
             with st.spinner("Jarvis is scanning textbook vectors..."):
-                context_str = query_textbooks(user_q, filter_course=None if target_course=="All" else target_course)
+                # Passing arguments plainly to match your RAG engine's setup
+                chosen_course = None if target_course == "All" else target_course
+                context_str = query_textbooks(user_q, chosen_course)
                 
                 messages = [
                     {"role": "system", "content": f"You are Jarvis, an elite engineering tutor. Answer the user's question accurately using this textbook context:\n\n{context_str}\n\nProvide deep architectural and clear mathematical breakdowns."},
