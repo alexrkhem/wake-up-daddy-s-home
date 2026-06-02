@@ -251,6 +251,14 @@ details > summary,
 /* Remove Streamlit branding */
 #MainMenu, footer, header { visibility: hidden; }
 [data-testid="stToolbar"] { display: none; }
+
+/* Force the Streamlit sidebar collapse/reopen chevron to be clearly visible */
+button[data-testid="stSidebarCollapseButton"] {
+    color: var(--gold) !important;       /* Uses your cream/gold variable */
+    background-color: var(--card) !important; /* Uses your dark card tile color */
+    border: 1px solid var(--border) !important;
+    border-radius: 4px;
+}
 </style>
 """, unsafe_allow_html=True)
 
