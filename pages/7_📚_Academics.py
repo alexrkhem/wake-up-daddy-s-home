@@ -174,7 +174,9 @@ with tab_assign:
             if st.button("🗑", key=f"adel_{aid}", use_container_width=True):
                 run_q("DELETE FROM assignments WHERE id=?", (aid,)); st.rerun()
 
-# ── RAG TUTOR INTERFACE ──────────────────────────────────────────
+# ══════════════════════ AI TUTOR ════════════════════════════════════════════
+with tab_tutor:
+    # ── RAG TUTOR INTERFACE ──────────────────────────────────────────
     st.markdown("### 🤖 Jarvis AI Textbook Tutor")
     
     # Check for your free Groq Key instead of Anthropic
@@ -189,7 +191,8 @@ with tab_assign:
         with q_col1:
             user_q = st.text_input("Ask Jarvis anything about your course textbooks / material:", key="rag_q")
         with q_col2:
-            target_course = st.selectbox("Context Course", ["All"] + [c[1] for c in active_courses])
+            # FIXED: Changed active_courses to courses to match your database variable
+            target_course = st.selectbox("Context Course", ["All"] + [c[1] for c in courses])
 
         if user_q.strip():
             with st.spinner("Jarvis is scanning textbook vectors..."):
@@ -218,9 +221,10 @@ with tab_assign:
         if st.button("✨ Generate Concept Practice Problems"):
             with st.spinner("Formulating engineering curriculum problems..."):
                 try:
+                    # FIXED: Changed active_courses to courses to match your database variable
                     prob_res = ai_client.chat.completions.create(
                         model="llama-3.1-8b-instant",
-                        messages=[{"role": "user", "content": f"Generate 3 highly specific engineering practice exam questions (with detailed analytical step-by-step solutions) for these active courses: {[c[1] for c in active_courses]}. Focus heavily on core formulas and structural concepts."}],
+                        messages=[{"role": "user", "content": f"Generate 3 highly specific engineering practice exam questions (with detailed analytical step-by-step solutions) for these active courses: {[c[1] for c in courses]}. Focus heavily on core formulas and structural concepts."}],
                         max_tokens=2048
                     )
                     st.markdown(f"""<div style="background:#1d1b18;border:1px dashed #3d3028;padding:1rem;border-radius:4px">
