@@ -68,7 +68,7 @@ padding:.45rem .7rem;margin:.3rem 0;border-radius:0 3px 3px 0;font-size:.77rem">
                     resp = client.chat.completions.create(
                         model="llama-3.1-8b-instant",
                         messages=[{"role": "system", "content": sys_p}] + msgs,
-                        max_tokens=900
+                        max_tokens=2048
                     )
                     
                     st.session_state.jarvis_msgs.append({
